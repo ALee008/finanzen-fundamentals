@@ -13,6 +13,36 @@ from finanzen_fundamentals.scraper import _make_soup
 from . import statics
 
 
+def parse_for_isin(string_object: str):
+    """get ISIN from string. Return None if pattern not found."""
+    isin = None
+    isin_pattern = r"[a-zA-Z]{2}[A-Z0-9]{9}\d"
+    # ISIN ISO 6166
+    isin_re = re.search(isin_pattern, string_object)
+    if isin_re:
+        isin = isin_re.group()
+
+    return isin
+
+
+def join_url(url: str, search_value: str):
+    """if search value is an ISIN use different url."""
+    isin = parse_for_isin(search_value)
+    url = url + search_value
+    if isin is not None:
+        url = r"https://www.finanzen.net/suchergebnis.asp?_search=" + search_value
+
+    return url, isin
+
+
+def get_isin_from_soup(soup):
+    isin = None
+    isin_soup = soup.find("meta", property="og:title")
+    if isin_soup:
+        isin = parse_for_isin(isin_soup["content"])
+
+    return isin
+
 # Define Function to Check for Error
 def _check_site(soup):
     message = soup.find("div", {"class": "special_info_box"})
@@ -24,12 +54,12 @@ def _check_site(soup):
 
 
 # Define Function to Extract GuV/Bilanz from finanzen.net
-def get_fundamentals(stock: str):
+def get_fundamentals(stock: str, use_isin=False):
     # Convert name to lowercase
     stock = stock.lower()
-
+    url, isin = join_url("https://www.finanzen.net/bilanz_guv/", stock)
     # Load Data
-    soup = _make_soup("https://www.finanzen.net/bilanz_guv/" + stock)
+    soup = _make_soup(url)
 
     # Check for Error
     _check_site(soup)
@@ -75,6 +105,8 @@ def get_fundamentals(stock: str):
     except Exception:
         balance_sheet = None
 
+    isin = isin if isin else get_isin_from_soup(soup)
+
     # Extract Other Information
     try:
         other_info = _parse_table(soup, "sonstige Angaben")
@@ -87,11 +119,47 @@ def get_fundamentals(stock: str):
         "Key Ratios": key_ratios,
         "Income Statement": income_info,
         "Balance Sheet": balance_sheet,
+        "ISIN": isin.upper(),
         "Other": other_info
     }
 
     # Return Fundamentals
     return fundamentals
+
+
+def get_chart_infos(stock: str):
+    # Convert name to lowercase
+    stock = stock.lower()
+    url, isin = join_url("https://www.finanzen.net/aktien/", stock)
+
+    # Load Data
+    soup = _make_soup(url)
+    # Check for Error
+    _check_site(soup)
+
+    # Define Function to Parse Table
+    def _parse_table(soup, signaler: str):
+        table = soup.find("h3", text=re.compile(signaler), attrs={"class": "box-headline"}).parent
+        # returns a list of data frames. Choose first one (asserting only one exists anyway)
+        df_table = pd.read_html(table.prettify(), decimal=",", thousands=".")[0]
+        # set first column as index
+        df_table.set_index(keys=df_table.columns.values[0], inplace=True)
+        return df_table
+
+    try:
+        performance_info = _parse_table(soup, "Performance")
+    except Exception as msg:
+        print(f"Warning {msg}. Setting performance_info=None.")
+        performance_info = None
+
+    isin = isin if isin else get_isin_from_soup(soup)
+
+    chart_infos = {
+        'ISIN': isin.upper(),
+        'Performance': performance_info.to_dict("index"),
+    }
+
+    return chart_infos
 
 
 # Define Function to Extract Estimates
