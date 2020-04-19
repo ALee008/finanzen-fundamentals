@@ -53,8 +53,46 @@ def _check_site(soup):
             raise ValueError("Could not find Stock")
 
 
+def get_indices(url: str="https://www.finanzen.net/index/dax/30-werte"):
+    """use base url and parse url of other indices"""
+    soup = _make_soup(url)
+    table = soup.find("ul", attrs={"class": "box-nav"})
+    # bs4 ResultSet containing all <li>-tags.
+    index_links = table.find_all("li")
+
+    indices = dict()
+    for result in index_links:
+        indices[result.a.text] = "{}{}".format("https://www.finanzen.net", result.a["href"])
+
+    return indices
+
+
+def get_stocks_in_index(url: str):
+    """"""
+    soup = _make_soup(url)
+    table = soup.find("div", attrs={"class": "box", "id": "index-list-container"})
+    stocks_in_index = pd.read_html(table.prettify())
+    assert len(stocks_in_index) == 1
+
+    stocks_in_index = extract_stock_from_df(stocks_in_index[0])
+    
+    return stocks_in_index
+
+
+def extract_stock_from_df(index_df: pd.DataFrame):
+    """return dictionary {stock_i: ISIN_i, ...}"""
+    # set stock as index and ISIN as column value
+    res = index_df.iloc[:, 0].str.split("  ", expand=True).set_index(0)
+    # transpose data frame and convert result to dictionary where key=stock name, value=ISIN
+    res = res.T.to_dict("records")
+
+    assert len(res) == 1
+
+    return res[0]
+    
+
 # Define Function to Extract GuV/Bilanz from finanzen.net
-def get_fundamentals(stock: str, use_isin=False):
+def get_fundamentals(stock: str):
     # Convert name to lowercase
     stock = stock.lower()
     url, isin = join_url("https://www.finanzen.net/bilanz_guv/", stock)
